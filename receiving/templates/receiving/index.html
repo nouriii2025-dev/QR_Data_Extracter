@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goods Receiving · Instrument scan list</title>
+<style>
+  :root {
+    --paper: #eef0ec; --card: #ffffff; --ink: #1b2a2f; --muted: #5d6b6f; --line: #d5dad4;
+    --green: #1f4e46; --green-soft: #dcebe6; --amber: #b87500; --amber-soft: #fbefd2;
+    --red: #a63232; --red-soft: #f6dcdc;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
+  header { background: var(--green); color: #fff; padding: 14px 28px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 19px; font-weight: 600; }
+  header span { opacity: .75; font-size: 14px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 22px 28px 60px; display: grid; gap: 20px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 18px 20px; }
+  h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text] {
+    width: 100%; padding: 10px 12px; font: 16px var(--mono); border: 1.5px solid var(--line);
+    border-radius: 4px; background: #fff; color: var(--ink);
+  }
+  input[type=text]:focus { outline: 3px solid var(--green-soft); border-color: var(--green); }
+  button {
+    font: 600 14px var(--sans); padding: 10px 16px; border-radius: 4px; border: 1.5px solid var(--green);
+    background: var(--green); color: #fff; cursor: pointer;
+  }
+  button.ghost { background: #fff; color: var(--green); }
+  button.danger { background: #fff; color: var(--red); border-color: var(--line); padding: 4px 10px; font-weight: 500; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible { outline: 3px solid var(--green-soft); outline-offset: 2px; }
+
+  .scan-row { display: flex; gap: 12px; align-items: end; }
+  .scan-row > div { flex: 1; }
+  .status { margin-top: 10px; padding: 8px 12px; border-radius: 4px; font-size: 14px; background: var(--green-soft); color: var(--green); }
+  .status.wait { background: var(--amber-soft); color: var(--amber); }
+  .status.err { background: var(--red-soft); color: var(--red); }
+
+  .work { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 880px) { .work { grid-template-columns: 1fr; } main { padding: 16px; } }
+  .src { font: 13px var(--mono); color: var(--muted); word-break: break-all; margin: 0 0 10px; }
+  .scroll { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f5f7f4; font-weight: 600; position: sticky; top: 0; }
+  td.k { color: var(--muted); width: 38%; }
+  td.mono, th.mono { font-family: var(--mono); }
+  .empty { color: var(--muted); padding: 22px 12px; text-align: center; }
+  .stack { display: grid; gap: 14px; }
+  .assign.ready { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
+  .bar .grow { flex: 1; min-width: 200px; }
+  select { padding: 10px 12px; font: 15px var(--mono); border: 1.5px solid var(--line); border-radius: 4px; background: #fff; min-width: 220px; }
+  details summary { cursor: pointer; color: var(--green); font-size: 13px; }
+  details table { margin-top: 6px; }
+  tr.flash td { animation: flash 2.2s ease-out; }
+  @keyframes flash { 0%, 40% { background: var(--red-soft); } 100% { background: transparent; } }
+  tr.added td { animation: added 1.6s ease-out; }
+  @keyframes added { 0% { background: var(--green-soft); } 100% { background: transparent; } }
+  .status.warn { background: var(--amber-soft); color: var(--amber); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+{% csrf_token %}
+<header>
+  <h1>Goods receiving</h1>
+  <span>Scan an instrument QR code. Serial number and range are added to the list.</span>
+</header>
+
+<main>
+  <section aria-labelledby="scan-h">
+    <h2 id="scan-h">1. Scan the QR code</h2>
+    <div class="scan-row">
+      <div>
+        <label for="scan">Scanner input (click here, then scan. Pasting a link also works)</label>
+        <input id="scan" type="text" autocomplete="off" autofocus placeholder="Waiting for scan…">
+      </div>
+      <button id="go" class="ghost" type="button">Add</button>
+    </div>
+    <div id="status" class="status" role="status" aria-live="polite">Ready. Point the scanner at a QR code.</div>
+  </section>
+
+  <section aria-labelledby="rec-h">
+    <h2 id="rec-h">2. Scanned instruments</h2>
+    <div class="bar">
+      <div class="grow"></div>
+      <button id="refresh" class="ghost" type="button">Refresh</button>
+      <button id="exp-all" type="button">Export to Excel</button>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr>
+        <th class="mono">Sl No</th><th class="mono">Serial number</th><th>Range</th><th>Scanned</th><th></th>
+      </tr></thead>
+      <tbody id="records"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const csrf = document.querySelector("[name=csrfmiddlewaretoken]").value;
+
+  const api = async (url, body) => {
+    const res = await fetch(url, body === undefined ? {} : {
+      method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { const err = new Error(data.error || "Something went wrong. Try again."); err.data = data; throw err; }
+    return data;
+  };
+  const say = (msg, kind = "") => { const s = $("status"); s.textContent = msg; s.className = "status " + kind; };
+  const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+
+  // short sound so the person at the dock does not need to look at the screen
+  let audio;
+  function beep(ok) {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = ok ? 880 : 220; g.gain.value = 0.08;
+      o.connect(g); g.connect(audio.destination);
+      o.start(); o.stop(audio.currentTime + (ok ? 0.12 : 0.4));
+    } catch (e) { /* sound is optional */ }
+  }
+
+  let markRow = null, markClass = "";   // row to highlight after the next table refresh
+
+  // Scans are processed one at a time, so a fast second scan is never lost.
+  const queue = []; let busy = false;
+  function enqueue() {
+    const v = $("scan").value.trim();
+    if (!v) return;
+    $("scan").value = "";
+    queue.push(v); run();
+  }
+  async function run() {
+    if (busy) return; busy = true;
+    while (queue.length) await scanOne(queue.shift());
+    busy = false; $("scan").focus();
+  }
+
+  async function scanOne(url) {
+    say("Reading the website…", "wait");
+    try {
+      const r = await api("/api/scan/", { url });
+      beep(true);
+      markRow = r.id; markClass = "added";
+      say(`Added Sl No ${r.sl}: ${r.serial}  ·  ${r.range || "range not found"}  (${r.seconds}s)`, r.warning ? "warn" : "");
+      if (r.warning) say(`Sl No ${r.sl}, ${r.serial} added. ${r.warning}`, "warn");
+      await loadRecords();
+    } catch (e) {
+      beep(false); say(e.message, "err");
+      if (e.data && e.data.duplicate) { markRow = e.data.existing_id; markClass = "flash"; await loadRecords(); }
+    }
+  }
+
+  async function loadRecords() {
+    const data = await api("/api/records/");
+    const tb = $("records"); tb.replaceChildren();
+    if (!data.records.length) {
+      const tr = el("tr"); const td = el("td", "Nothing scanned yet. Scanned instruments appear here.", "empty"); td.colSpan = 5; tr.append(td); tb.append(tr); return;
+    }
+    for (const r of data.records) {
+      const tr = el("tr"); tr.dataset.id = r.id;
+      const del = el("button", "Remove", "danger");
+      del.onclick = async () => {
+        if (confirm(`Remove Sl No ${r.sl} (${r.serial}) from the list? The number will be given to the next scan.`)) { await api(`/api/records/${r.id}/delete/`, {}); loadRecords(); }
+      };
+      const act = el("td"); act.append(del);
+      tr.append(el("td", r.sl, "mono"), el("td", r.serial, "mono"), el("td", r.range || "—"), el("td", r.scanned), act);
+      tb.append(tr);
+    }
+    if (markRow !== null) {
+      const tr = tb.querySelector(`tr[data-id="${markRow}"]`);
+      if (tr) { tr.classList.add(markClass); tr.scrollIntoView({ block: "nearest" }); }
+      markRow = null;
+    }
+  }
+
+  // A USB scanner types the code and presses Enter, so Enter means "scan finished".
+  $("scan").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); enqueue(); } });
+  $("go").onclick = enqueue;
+  $("refresh").onclick = async () => {
+    const n = document.querySelectorAll("#records tr[data-id]").length;
+    const ask = n ? `Remove all ${n} scanned item${n === 1 ? "" : "s"} and start a new list?\n\nThis cannot be undone. Use "Export to Excel" first if you still need them.`
+                  : "Clear the page and start a new list?";
+    if (!confirm(ask)) return;
+    queue.length = 0;                       // drop any scan still waiting
+    await api("/api/clear/", {});
+    $("scan").value = ""; markRow = null;
+    say("Cleared. Ready for a new list.");
+    await loadRecords(); $("scan").focus();
+  };
+  $("exp-all").onclick = () => location.href = "/export/";
+
+  loadRecords();
+})();
+</script>
+</body>
+</html>
